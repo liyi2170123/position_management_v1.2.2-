@@ -180,124 +180,50 @@ if uploaded_file is not None:
                 
                 # 识别回撤事件（从高点开始到低点结束的连续回撤）
                 drawdown_events = []
+                in_drawdown = False
+                current_high = 0
+                current_high_time = None
                 
-                # 策略1：直接从净值累计最大值识别回撤
-                # 找出所有创新高的点
-                high_points = filtered_data[filtered_data['is_new_high']].index.tolist()
-                
-                if high_points:
-                    # 添加最后一个点，以便处理最后一段回撤
-                    high_points.append(filtered_data.index[-1])
-                    
-                    # 遍历每对相邻高点之间的回撤
-                    for i in range(len(high_points) - 1):
-                        start_idx = high_points[i]
-                        end_idx = high_points[i+1]
-                        
-                        # 获取这段时间内的数据
-                        segment = filtered_data.iloc[start_idx:end_idx+1]
-                        
-                        if len(segment) > 1:  # 确保至少有两个点
-                            # 计算最大回撤
-                            start_value = segment['重置净值'].iloc[0]
-                            min_value = segment['重置净值'].min()
-                            min_idx = segment['重置净值'].idxmin()
-                            
-                            # 计算回撤百分比
-                            dd_pct = (min_value - start_value) / start_value * 100
-                            
-                            # 如果回撤足够大
-                            if dd_pct <= -min_drawdown and dd_pct >= -max_drawdown:
-                                start_time = filtered_data.loc[start_idx, 'candle_begin_time']
-                                min_time = filtered_data.loc[min_idx, 'candle_begin_time']
-                                
-                                # 计算持续天数
-                                duration_days = (min_time - start_time).total_seconds() / (24 * 3600)
-                                
-                                # 如果持续天数在范围内
-                                if duration_days >= min_drawdown_days and duration_days <= max_drawdown_days:
-                                    # 记录这次回撤
-                                    drawdown_event = {
-                                        'start_time': start_time,
-                                        'end_time': min_time,
-                                        'max_drawdown': dd_pct,
-                                        'duration': duration_days
-                                    }
-                                    drawdown_events.append(drawdown_event)
-                
-                # 策略2：特别处理2月中旬的回撤
-                feb_special_start = pd.Timestamp('2025-02-18')
-                feb_special_end = pd.Timestamp('2025-02-23')
-                
-                feb_data = filtered_data[
-                    (filtered_data['candle_begin_time'] >= feb_special_start) & 
-                    (filtered_data['candle_begin_time'] <= feb_special_end)
-                ]
-                
-                if len(feb_data) > 0:
-                    # 找出2月份区间内的最高点和最低点
-                    feb_high_idx = feb_data['重置净值'].idxmax()
-                    feb_low_idx = feb_data['重置净值'].idxmin()
-                    
-                    # 确保高点在低点之前
-                    if feb_high_idx < feb_low_idx:
-                        feb_high_time = feb_data.loc[feb_high_idx, 'candle_begin_time']
-                        feb_high_value = feb_data.loc[feb_high_idx, '重置净值']
-                        feb_low_time = feb_data.loc[feb_low_idx, 'candle_begin_time']
-                        feb_low_value = feb_data.loc[feb_low_idx, '重置净值']
-                        
-                        # 计算回撤百分比
-                        feb_dd_pct = (feb_low_value - feb_high_value) / feb_high_value * 100
-                        feb_duration = (feb_low_time - feb_high_time).total_seconds() / (24 * 3600)
-                        
-                        # 判断是否有重叠的回撤事件
-                        feb_overlap = False
-                        for event in drawdown_events:
-                            if (event['start_time'] <= feb_low_time and event['end_time'] >= feb_high_time) or \
-                               (abs((event['start_time'] - feb_high_time).total_seconds()) < 43200 and
-                                abs((event['end_time'] - feb_low_time).total_seconds()) < 43200):
-                                feb_overlap = True
-                                break
-                        
-                        # 如果没有重叠并且回撤足够大，添加这次回撤
-                        if not feb_overlap and feb_dd_pct <= -1.0:
-                            feb_event = {
-                                'start_time': feb_high_time,
-                                'end_time': feb_low_time,
-                                'max_drawdown': feb_dd_pct,
-                                'duration': feb_duration
-                            }
-                            drawdown_events.append(feb_event)
-                            st.info(f"已添加2月特殊时期的回撤事件 ({feb_dd_pct:.2f}%)，从 {feb_high_time} 到 {feb_low_time}，持续 {feb_duration:.2f} 天。")
+                for idx, row in filtered_data.iterrows():
+                    if row['is_new_high']:
+                        # 如果是新高，更新当前高点
+                        current_high = row['重置净值']
+                        current_high_time = row['candle_begin_time']
+                        in_drawdown = False
                     else:
-                        # 如果没有找到合适的高低点顺序，手动添加2月18-19的回撤
-                        # 直接指定2月18-19的回撤
-                        feb18_start = pd.Timestamp('2025-02-18 16:00:00')
-                        feb19_end = pd.Timestamp('2025-02-19 13:00:00')
+                        # 如果不是新高，检查是否在回撤中
+                        current_dd_pct = (row['重置净值'] - current_high) / current_high * 100
                         
-                        # 查找这些时间点附近的数据
-                        feb18_data = filtered_data[filtered_data['candle_begin_time'] >= feb18_start].iloc[0:10]
-                        feb19_data = filtered_data[filtered_data['candle_begin_time'] <= feb19_end].iloc[-10:]
-                        
-                        if len(feb18_data) > 0 and len(feb19_data) > 0:
-                            # 使用这段时间内的数据计算回撤
-                            start_value = feb18_data['重置净值'].iloc[0]
-                            end_value = feb19_data['重置净值'].iloc[-1]
-                            dd_pct = (end_value - start_value) / start_value * 100
-                            duration_days = (feb19_end - feb18_start).total_seconds() / (24 * 3600)
+                        if not in_drawdown and current_dd_pct <= -min_drawdown:
+                            # 开始新的回撤事件
+                            in_drawdown = True
+                            start_time = current_high_time
                             
-                            manual_feb_event = {
-                                'start_time': feb18_start,
-                                'end_time': feb19_end,
-                                'max_drawdown': dd_pct,
-                                'duration': duration_days
-                            }
+                        if in_drawdown and (current_dd_pct >= -0.5 or idx == filtered_data.index[-1]):
+                            # 回撤结束（恢复到接近高点或数据结束）
+                            in_drawdown = False
+                            end_time = row['candle_begin_time']
                             
-                            drawdown_events.append(manual_feb_event)
-                            st.info(f"已手动添加2月18-19的回撤事件 ({dd_pct:.2f}%)，持续 {duration_days:.2f} 天。")
-                
-                # 确保回撤事件按时间排序
-                drawdown_events.sort(key=lambda x: x['start_time'])
+                            # 计算回撤期间的最大回撤
+                            period_data = filtered_data[(filtered_data['candle_begin_time'] >= start_time) & 
+                                                      (filtered_data['candle_begin_time'] <= end_time)]
+                            
+                            if len(period_data) > 0:
+                                period_high = period_data['重置净值'].iloc[0]  # 回撤开始时的高点
+                                period_low = period_data['重置净值'].min()     # 回撤期间的最低点
+                                max_dd_during_event = (period_low - period_high) / period_high * 100
+                                
+                                duration_days = (end_time - start_time).total_seconds() / (24 * 3600)
+                                
+                                # 检查是否满足筛选条件
+                                if (max_dd_during_event <= -min_drawdown and max_dd_during_event >= -max_drawdown and
+                                    duration_days >= min_drawdown_days and duration_days <= max_drawdown_days):
+                                    drawdown_events.append({
+                                        'start_time': start_time,
+                                        'end_time': end_time,
+                                        'max_drawdown': max_dd_during_event,
+                                        'duration': duration_days
+                                    })
                 
                 # 计算符合条件的回撤次数
                 drawdown_count = len(drawdown_events)
@@ -575,10 +501,7 @@ if uploaded_file is not None:
                                 # 添加一个特殊的检查，确保年度最大回撤总是被显示，即使它不在筛选条件内
                                 # 这是为了解决某些年份（如2021年）最大回撤未显示的问题
                                 special_years = [2021, 2025]  # 添加需要特殊处理的年份
-                                special_dates = [pd.Timestamp('2025-02-18')]  # 添加需要特殊处理的日期
-                                
-                                if (year in special_years and abs(year_max_dd) > 20.0) or (  # 特殊年份且回撤大于20%
-                                    any(date.year == year for date in special_dates)):        # 或包含特殊日期
+                                if year in special_years and abs(year_max_dd) > 20.0:  # 对于特定年份，如果回撤大于20%，总是显示它
                                     # 检查是否已经添加了这个回撤事件
                                     already_added = False
                                     for event in year_drawdown_events:
@@ -611,47 +534,6 @@ if uploaded_file is not None:
                                         
                                         if not is_duplicate:
                                             year_drawdown_events.append(event)
-                                
-                                # 检查是否有特殊日期的回撤（如2月18日）
-                                if year == 2025:
-                                    feb_18_found = False
-                                    for event in year_drawdown_events:
-                                        start_date = event['start_time'].date() if isinstance(event['start_time'], pd.Timestamp) else pd.Timestamp(event['start_time']).date()
-                                        end_date = event['end_time'].date() if isinstance(event['end_time'], pd.Timestamp) else pd.Timestamp(event['end_time']).date()
-                                        
-                                        if (start_date <= pd.Timestamp('2025-02-18').date() <= end_date or
-                                            start_date == pd.Timestamp('2025-02-18').date() or 
-                                            end_date == pd.Timestamp('2025-02-18').date()):
-                                            feb_18_found = True
-                                            break
-                                    
-                                    # 如果没有找到2月18日的回撤，尝试在年度数据中查找
-                                    if not feb_18_found:
-                                        # 在2月18日前后找到局部高点和低点
-                                        feb_18_data = year_data[(year_data['candle_begin_time'] >= pd.Timestamp('2025-02-15')) & 
-                                                              (year_data['candle_begin_time'] <= pd.Timestamp('2025-02-20'))]
-                                        
-                                        if len(feb_18_data) > 0:
-                                            # 找出局部最高点和最低点
-                                            local_high_idx = feb_18_data['年度重置净值'].idxmax()
-                                            local_low_idx = feb_18_data['年度重置净值'].idxmin()
-                                            
-                                            # 确保高点在低点之前
-                                            if local_high_idx < local_low_idx:
-                                                local_high = feb_18_data.loc[local_high_idx, '年度重置净值']
-                                                local_low = feb_18_data.loc[local_low_idx, '年度重置净值']
-                                                local_dd = (local_low - local_high) / local_high * 100
-                                                local_duration = (feb_18_data.loc[local_low_idx, 'candle_begin_time'] - 
-                                                                 feb_18_data.loc[local_high_idx, 'candle_begin_time']).total_seconds() / (24 * 3600)
-                                                
-                                                if local_dd < 0:  # 确保是回撤（负值）
-                                                    st.info(f"已添加2月18日附近的回撤事件({local_dd:.2f}%)到表格中。")
-                                                    year_drawdown_events.append({
-                                                        'start_time': feb_18_data.loc[local_high_idx, 'candle_begin_time'],
-                                                        'end_time': feb_18_data.loc[local_low_idx, 'candle_begin_time'],
-                                                        'max_drawdown': local_dd,
-                                                        'duration': local_duration
-                                                    })
                                 
                                 # 转换为DataFrame
                                 year_events_df = pd.DataFrame(year_drawdown_events)
@@ -744,122 +626,6 @@ if uploaded_file is not None:
                                     hovermode="x unified"
                                 )
                                 st.plotly_chart(fig_year_dd, use_container_width=True)
-                                
-                                # 添加年度新高模块
-                                st.subheader(f"{year}年新高间隔数据")
-                                
-                                # 找出当年的所有创新高点
-                                year_high_points = year_data[year_data['is_new_high']].index.tolist()
-                                
-                                # 如果有至少两个新高点，才能计算新高之间的区间
-                                if len(year_high_points) >= 2:
-                                    # 创建一个列表保存新高之间的区间信息
-                                    high_intervals = []
-                                    
-                                    # 添加最后一个点，用于计算最后一段区间
-                                    year_high_points.append(year_data.index[-1])
-                                    
-                                    # 遍历每对相邻新高之间的区间
-                                    for i in range(len(year_high_points) - 1):
-                                        start_idx = year_high_points[i]
-                                        end_idx = year_high_points[i+1]
-                                        
-                                        # 获取这段时间内的数据
-                                        segment = year_data.iloc[start_idx:end_idx+1]
-                                        
-                                        if len(segment) > 1:  # 确保至少有两个点
-                                            # 获取开始和结束时间
-                                            start_time = year_data.loc[start_idx, 'candle_begin_time']
-                                            end_time = year_data.loc[end_idx, 'candle_begin_time']
-                                            
-                                            # 计算持续天数
-                                            duration_days = (end_time - start_time).total_seconds() / (24 * 3600)
-                                            
-                                            # 计算区间内的最大回撤
-                                            start_value = segment['年度重置净值'].iloc[0]
-                                            min_value = segment['年度重置净值'].min()
-                                            min_idx = segment['年度重置净值'].idxmin()
-                                            min_time = year_data.loc[min_idx, 'candle_begin_time']
-                                            
-                                            # 计算从起点到最低点的回撤百分比
-                                            max_dd_pct = (min_value - start_value) / start_value * 100
-                                            # 计算最大回撤的持续天数
-                                            dd_duration_days = (min_time - start_time).total_seconds() / (24 * 3600)
-                                            
-                                            # 检查回撤是否在用户设定的范围内
-                                            if (abs(max_dd_pct) >= min_drawdown and 
-                                                abs(max_dd_pct) <= max_drawdown and 
-                                                dd_duration_days >= min_drawdown_days and 
-                                                dd_duration_days <= max_drawdown_days):
-                                                
-                                                # 将区间信息添加到列表中
-                                                interval_info = {
-                                                    'start_time': start_time,       # 第一个新高点时间
-                                                    'end_time': end_time,           # 下一个新高点时间
-                                                    'max_drawdown': max_dd_pct,     # 从新高到最低点的回撤
-                                                    'dd_end_time': min_time,        # 回撤结束时间（最低点）
-                                                    'dd_duration': dd_duration_days, # 回撤持续天数（新高到最低点）
-                                                    'duration': duration_days,      # 两个新高点之间的间隔天数
-                                                    'is_last': (i == len(year_high_points) - 2)  # 标记是否是最后一个区间
-                                                }
-                                                high_intervals.append(interval_info)
-                                    
-                                    # 创建DataFrame显示新高之间的区间信息
-                                    if high_intervals:
-                                        high_intervals_df = pd.DataFrame(high_intervals)
-                                        
-                                        # 创建排序选项
-                                        sort_options_high = ["默认排序", "按持续天数升序", "按持续天数降序", "按回撤幅度升序", "按回撤幅度降序"]
-                                        selected_sort_high = st.selectbox(f"{year}年新高间隔排序方式", sort_options_high, key=f"sort_high_{year}")
-                                        
-                                        # 根据选择进行排序
-                                        if selected_sort_high == "按持续天数升序":
-                                            high_intervals_df = high_intervals_df.sort_values(by='duration', ascending=True)
-                                        elif selected_sort_high == "按持续天数降序":
-                                            high_intervals_df = high_intervals_df.sort_values(by='duration', ascending=False)
-                                        elif selected_sort_high == "按回撤幅度升序":
-                                            high_intervals_df = high_intervals_df.sort_values(by='max_drawdown', ascending=True)
-                                        elif selected_sort_high == "按回撤幅度降序":
-                                            high_intervals_df = high_intervals_df.sort_values(by='max_drawdown', ascending=False)
-                                        
-                                        # 转换格式用于显示
-                                        high_intervals_df['start_time'] = high_intervals_df['start_time'].apply(lambda x: x.strftime('%Y-%m-%d %H:%M:%S'))
-                                        high_intervals_df['end_time'] = high_intervals_df.apply(
-                                            lambda row: row['end_time'].strftime('%Y-%m-%d %H:%M:%S') if not row['is_last'] else row['end_time'].strftime('%Y-%m-%d %H:%M:%S') + " (当前)", 
-                                            axis=1
-                                        )
-                                        high_intervals_df['dd_end_time'] = high_intervals_df['dd_end_time'].apply(lambda x: x.strftime('%Y-%m-%d %H:%M:%S'))
-                                        high_intervals_df['max_drawdown'] = high_intervals_df['max_drawdown'].apply(lambda x: f"{x:.2f}%")
-                                        high_intervals_df['dd_duration'] = high_intervals_df['dd_duration'].apply(lambda x: f"{x:.2f}天")
-                                        high_intervals_df['duration'] = high_intervals_df['duration'].apply(lambda x: f"{x:.2f}天")
-                                        
-                                        # 移除辅助列
-                                        high_intervals_df = high_intervals_df.drop(columns=['is_last'])
-                                        
-                                        # 重命名列
-                                        high_intervals_df.columns = ['新高开始时间', '下一个新高时间', '最大回撤', '回撤最低点时间', '回撤持续天数', '新高间隔天数']
-                                        
-                                        # 添加索引列
-                                        high_intervals_df.insert(0, '序号', range(1, len(high_intervals_df) + 1))
-                                        
-                                        # 显示新高间隔表格
-                                        st.write(f"新高间隔次数: {len(high_intervals_df)}")
-                                        st.dataframe(high_intervals_df)
-                                        
-                                        # 添加解释说明
-                                        st.info(f"""上表显示了{year}年内每两次新高之间的区间信息：
-- 新高开始时间：第一次创新高的时间点
-- 下一个新高时间：下一次创新高的时间点（或当前时间）
-- 最大回撤：从新高开始到区间内最低点的回撤百分比
-- 回撤最低点时间：最大回撤达到的时间点
-- 回撤持续天数：从新高到回撤最低点的天数
-- 新高间隔天数：从一个新高到下一个新高的总天数
-
-注意：表格仅显示符合筛选条件的区间（回撤幅度在{min_drawdown}%-{max_drawdown}%之间，回撤持续天数在{min_drawdown_days}-{max_drawdown_days}天之间）""")
-                                    else:
-                                        st.write(f"{year}年内没有足够的新高点数据")
-                                else:
-                                    st.write(f"{year}年内没有足够的新高点数据")
                             else:
                                 st.write(f"{year}年没有数据")
                 
