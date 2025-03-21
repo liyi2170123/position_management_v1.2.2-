@@ -87,7 +87,7 @@ if uploaded_file is not None:
                     "最大回撤百分比 (%)",
                     min_value=0.0,
                     max_value=50.0,
-                    value=20.0,
+                    value=50.0,
                     step=0.5
                 )
             
@@ -107,7 +107,7 @@ if uploaded_file is not None:
                     "最大回撤持续天数",
                     min_value=0.0,
                     max_value=100.0,
-                    value=30.0,
+                    value=100.0,
                     step=0.1
                 )
             
@@ -127,7 +127,7 @@ if uploaded_file is not None:
                     "最大新高间隔天数",
                     min_value=0.0,
                     max_value=100.0,
-                    value=50.0,
+                    value=100.0,
                     step=0.1
                 )
             
