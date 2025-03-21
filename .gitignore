@@ -4,3 +4,9 @@
 **.log
 **/.DS_Store
 logs/
+.DS_Store
+__pycache__/
+*.pyc
+.env
+app copy.py
+app_本地.py

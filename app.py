@@ -4,6 +4,20 @@ import plotly.graph_objects as go
 from datetime import datetime
 import numpy as np
 import os
+import logging
+
+# 配置日志
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# 添加时区处理函数
+def ensure_naive_timestamp(ts):
+    """确保时间戳没有时区信息"""
+    if isinstance(ts, pd.Timestamp):
+        if ts.tz is not None:
+            return ts.tz_localize(None)
+        return ts
+    return ts
 
 st.set_page_config(page_title="资金曲线分析工具", layout="wide")
 
@@ -17,13 +31,22 @@ if uploaded_file is not None:
     try:
         equity_data = pd.read_csv(uploaded_file)
         
+        # 记录数据信息
+        logger.info(f"文件读取成功，原始数据形状: {equity_data.shape}")
+        
         # 检查是否包含必要的列
         required_columns = ['candle_begin_time', '净值']
         if not all(col in equity_data.columns for col in required_columns):
             st.error("上传的CSV文件格式不正确，请确保包含 'candle_begin_time' 和 '净值' 列")
         else:
             # 转换时间列为datetime格式
-            equity_data['candle_begin_time'] = pd.to_datetime(equity_data['candle_begin_time']).dt.tz_localize(None)
+            logger.info(f"转换前时间列样例: {equity_data['candle_begin_time'].iloc[0]}")
+            equity_data['candle_begin_time'] = pd.to_datetime(equity_data['candle_begin_time'])
+            logger.info(f"转换后时间列样例及时区: {equity_data['candle_begin_time'].iloc[0]}, 时区: {equity_data['candle_begin_time'].dt.tz}")
+            
+            if equity_data['candle_begin_time'].dt.tz is not None:
+                equity_data['candle_begin_time'] = equity_data['candle_begin_time'].dt.tz_localize(None)
+                logger.info(f"移除时区后时间列样例: {equity_data['candle_begin_time'].iloc[0]}, 时区: {equity_data['candle_begin_time'].dt.tz}")
             
             # 显示数据基本信息
             st.subheader("数据基本信息")
@@ -109,8 +132,11 @@ if uploaded_file is not None:
                 )
             
             # 过滤数据
-            start_datetime = pd.Timestamp(start_date).tz_localize(None)
-            end_datetime = pd.Timestamp(end_date).tz_localize(None) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+            start_datetime = pd.Timestamp(start_date)
+            end_datetime = pd.Timestamp(end_date) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+            # 确保时区一致
+            start_datetime = ensure_naive_timestamp(start_datetime)
+            end_datetime = ensure_naive_timestamp(end_datetime)
             filtered_data = equity_data[(equity_data['candle_begin_time'] >= start_datetime) & 
                                        (equity_data['candle_begin_time'] <= end_datetime)].copy()
             
@@ -569,19 +595,21 @@ if uploaded_file is not None:
                             if year == filtered_data['candle_begin_time'].dt.year.min():
                                 year_start = filtered_data['candle_begin_time'].min()
                             else:
-                                year_start = pd.Timestamp(f"{year}-01-01").tz_localize(None)
-                            
+                                year_start = pd.Timestamp(f"{year}-01-01")
+                                year_start = ensure_naive_timestamp(year_start)
+
                             if year == filtered_data['candle_begin_time'].dt.year.max():
                                 year_end = filtered_data['candle_begin_time'].max()
                             else:
-                                year_end = pd.Timestamp(f"{year}-12-31 23:59:59").tz_localize(None)
+                                year_end = pd.Timestamp(f"{year}-12-31 23:59:59")
+                                year_end = ensure_naive_timestamp(year_end)
+
+                            # 确保时区一致性
+                            year_data = filtered_data[(filtered_data['candle_begin_time'] >= year_start) & 
+                                                      (filtered_data['candle_begin_time'] <= year_end)].copy()
                             
                             # 显示当年的时间范围
                             st.write(f"时间范围: {year_start.strftime('%Y-%m-%d %H:%M:%S')} 至 {year_end.strftime('%Y-%m-%d %H:%M:%S')}")
-                            
-                            # 筛选当年的资金曲线数据
-                            year_data = filtered_data[(filtered_data['candle_begin_time'] >= year_start) & 
-                                                    (filtered_data['candle_begin_time'] <= year_end)].copy()
                             
                             if len(year_data) > 0:
                                 # 重新计算净值，从1开始
