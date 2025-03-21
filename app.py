@@ -23,7 +23,7 @@ if uploaded_file is not None:
             st.error("上传的CSV文件格式不正确，请确保包含 'candle_begin_time' 和 '净值' 列")
         else:
             # 转换时间列为datetime格式
-            equity_data['candle_begin_time'] = pd.to_datetime(equity_data['candle_begin_time'])
+            equity_data['candle_begin_time'] = pd.to_datetime(equity_data['candle_begin_time']).dt.tz_localize(None)
             
             # 显示数据基本信息
             st.subheader("数据基本信息")
@@ -109,8 +109,8 @@ if uploaded_file is not None:
                 )
             
             # 过滤数据
-            start_datetime = pd.Timestamp(start_date)
-            end_datetime = pd.Timestamp(end_date) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+            start_datetime = pd.Timestamp(start_date).tz_localize(None)
+            end_datetime = pd.Timestamp(end_date).tz_localize(None) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
             filtered_data = equity_data[(equity_data['candle_begin_time'] >= start_datetime) & 
                                        (equity_data['candle_begin_time'] <= end_datetime)].copy()
             
@@ -569,12 +569,12 @@ if uploaded_file is not None:
                             if year == filtered_data['candle_begin_time'].dt.year.min():
                                 year_start = filtered_data['candle_begin_time'].min()
                             else:
-                                year_start = pd.Timestamp(f"{year}-01-01")
+                                year_start = pd.Timestamp(f"{year}-01-01").tz_localize(None)
                             
                             if year == filtered_data['candle_begin_time'].dt.year.max():
                                 year_end = filtered_data['candle_begin_time'].max()
                             else:
-                                year_end = pd.Timestamp(f"{year}-12-31 23:59:59")
+                                year_end = pd.Timestamp(f"{year}-12-31 23:59:59").tz_localize(None)
                             
                             # 显示当年的时间范围
                             st.write(f"时间范围: {year_start.strftime('%Y-%m-%d %H:%M:%S')} 至 {year_end.strftime('%Y-%m-%d %H:%M:%S')}")
